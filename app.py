@@ -1,232 +1,156 @@
 import streamlit as st
 import re
-import json
-import requests
-from urllib.parse import quote
 
-st.set_page_config(page_title="Extracteur Pro", page_icon="🚀")
-st.title("🚀 Extracteur YouTube (Version Tout-Terrain)")
-st.write("Cet outil force la récupération des sous-titres, même automatiques.")
+st.set_page_config(page_title="Extracteur YouTube", page_icon="🚀")
+st.title("🚀 Extracteur de Sous-titres YouTube")
 
-def extract_video_id(url):
-    """Extrait l'ID de la vidéo YouTube"""
-    patterns = [
-        r'(?:v=|\/)([0-9A-Za-z_-]{11}).*',
-        r'(?:embed\/)([0-9A-Za-z_-]{11})',
-        r'(?:watch\?v=)([0-9A-Za-z_-]{11})',
-        r'youtu\.be\/([0-9A-Za-z_-]{11})'
-    ]
+# TEST D'INSTALLATION
+st.sidebar.header("🔍 Diagnostic")
+
+# Test 1: Import youtube_transcript_api
+try:
+    import youtube_transcript_api
+    st.sidebar.success("✅ youtube-transcript-api installé")
+    st.sidebar.caption(f"Version: {youtube_transcript_api.__version__ if hasattr(youtube_transcript_api, '__version__') else 'inconnue'}")
+except ImportError:
+    st.sidebar.error("❌ youtube-transcript-api NON installé")
+    st.sidebar.code("pip install youtube-transcript-api")
+    st.stop()
+
+# Test 2: Vérifier les méthodes disponibles
+try:
+    from youtube_transcript_api import YouTubeTranscriptApi
+    methods = dir(YouTubeTranscriptApi)
     
-    for pattern in patterns:
-        match = re.search(pattern, url)
-        if match:
-            return match.group(1)
-    return None
+    has_get_transcript = 'get_transcript' in methods
+    has_list_transcripts = 'list_transcripts' in methods
+    
+    st.sidebar.write("**Méthodes disponibles:**")
+    st.sidebar.write(f"- get_transcript: {'✅' if has_get_transcript else '❌'}")
+    st.sidebar.write(f"- list_transcripts: {'✅' if has_list_transcripts else '❌'}")
+    
+    if not has_get_transcript and not has_list_transcripts:
+        st.sidebar.error("⚠️ Version cassée!")
+        st.sidebar.code("pip uninstall youtube-transcript-api\npip install youtube-transcript-api==0.6.2")
+        
+except Exception as e:
+    st.sidebar.error(f"Erreur: {e}")
 
-def get_subtitles_with_library(video_id):
-    """Méthode 1 : Utiliser youtube-transcript-api"""
-    try:
-        from youtube_transcript_api import YouTubeTranscriptApi
+# INTERFACE PRINCIPALE
+url_input = st.text_input("URL YouTube:", placeholder="https://www.youtube.com/watch?v=...")
+
+if st.button("Extraire les sous-titres"):
+    if not url_input:
+        st.warning("Entrez une URL")
+        st.stop()
+    
+    # Extraire video ID
+    match = re.search(r'(?:v=|/)([0-9A-Za-z_-]{11})', url_input)
+    if not match:
+        st.error("URL invalide")
+        st.stop()
+    
+    video_id = match.group(1)
+    st.info(f"Video ID: `{video_id}`")
+    
+    # Import
+    from youtube_transcript_api import YouTubeTranscriptApi
+    
+    with st.spinner("Extraction en cours..."):
+        result_text = None
+        result_lang = None
+        result_method = None
         
-        # Essayer différentes langues
-        languages = [['fr'], ['en'], ['fr-FR'], ['en-US']]
-        
-        for lang in languages:
+        # APPROCHE 1: get_transcript simple
+        if 'get_transcript' in dir(YouTubeTranscriptApi):
             try:
-                transcript = YouTubeTranscriptApi.get_transcript(video_id, languages=lang)
-                text = " ".join([item['text'] for item in transcript])
-                return text, lang[0], "youtube-transcript-api"
-            except:
-                continue
+                st.write("🔄 Essai: get_transcript (sans langue)...")
+                data = YouTubeTranscriptApi.get_transcript(video_id)
+                result_text = " ".join([x['text'] for x in data])
+                result_lang = "auto"
+                result_method = "get_transcript()"
+                st.success("✅ Réussi avec get_transcript()")
+            except Exception as e:
+                st.warning(f"get_transcript échoué: {str(e)[:100]}")
         
-        # Sans langue spécifique
-        try:
-            transcript = YouTubeTranscriptApi.get_transcript(video_id)
-            text = " ".join([item['text'] for item in transcript])
-            return text, "auto", "youtube-transcript-api"
-        except:
-            pass
-            
-        # list_transcripts
-        try:
-            transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
-            transcript = next(iter(transcript_list))
-            data = transcript.fetch()
-            text = " ".join([item['text'] for item in data])
-            return text, transcript.language, "youtube-transcript-api (list)"
-        except:
-            pass
-            
-    except ImportError:
-        pass
-    except Exception as e:
-        st.warning(f"Méthode bibliothèque échouée : {str(e)}")
-    
-    return None, None, None
-
-def get_subtitles_direct_api(video_id):
-    """Méthode 2 : Requête directe à l'API YouTube (timsub)"""
-    try:
-        # Récupérer la page YouTube pour obtenir les infos de sous-titres
-        url = f"https://www.youtube.com/watch?v={video_id}"
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-        }
+        # APPROCHE 2: get_transcript avec langue
+        if not result_text and 'get_transcript' in dir(YouTubeTranscriptApi):
+            for lang in ['fr', 'en']:
+                try:
+                    st.write(f"🔄 Essai: get_transcript(languages=['{lang}'])...")
+                    data = YouTubeTranscriptApi.get_transcript(video_id, languages=[lang])
+                    result_text = " ".join([x['text'] for x in data])
+                    result_lang = lang
+                    result_method = f"get_transcript(lang={lang})"
+                    st.success(f"✅ Réussi avec langue {lang}")
+                    break
+                except Exception as e:
+                    st.warning(f"Langue {lang} échouée: {str(e)[:50]}")
         
-        response = requests.get(url, headers=headers, timeout=10)
-        
-        if response.status_code != 200:
-            return None, None, None
-        
-        # Chercher les URLs de sous-titres dans le HTML
-        html = response.text
-        
-        # Pattern pour trouver les URLs de timedtext
-        patterns = [
-            r'"captionTracks":\[{"baseUrl":"([^"]+)"',
-            r'"captionTracks":\[\{"baseUrl":"([^"]+)"',
-        ]
-        
-        caption_url = None
-        for pattern in patterns:
-            match = re.search(pattern, html)
-            if match:
-                caption_url = match.group(1).replace('\\u0026', '&')
-                break
-        
-        if not caption_url:
-            return None, None, None
-        
-        # Télécharger les sous-titres
-        caption_response = requests.get(caption_url, headers=headers, timeout=10)
-        
-        if caption_response.status_code != 200:
-            return None, None, None
-        
-        # Parser le XML
-        import xml.etree.ElementTree as ET
-        root = ET.fromstring(caption_response.text)
-        
-        # Extraire le texte
-        texts = []
-        for child in root:
-            if child.text:
-                # Nettoyer le texte
-                text = child.text.strip()
-                text = text.replace('\n', ' ')
-                texts.append(text)
-        
-        full_text = " ".join(texts)
-        return full_text, "auto-detecté", "API directe"
-        
-    except Exception as e:
-        st.warning(f"Méthode API directe échouée : {str(e)}")
-    
-    return None, None, None
-
-# Interface utilisateur
-with st.expander("ℹ️ Informations importantes"):
-    st.info("""
-    **Ce qui est testé :**
-    1. Bibliothèque youtube-transcript-api (3 méthodes)
-    2. Requêtes directes à l'API YouTube
-    
-    **Limitations :**
-    - La vidéo doit être publique
-    - Les sous-titres doivent être activés
-    """)
-
-urls_input = st.text_area("Collez vos liens YouTube ici (un par ligne) :", height=150, 
-                          placeholder="https://www.youtube.com/watch?v=...")
-
-if st.button("🚀 Lancer l'extraction", type="primary"):
-    if not urls_input:
-        st.warning("⚠️ Aucun lien détecté.")
-    else:
-        urls = [u.strip() for u in urls_input.split('\n') if u.strip()]
-        
-        for idx, url in enumerate(urls, 1):
-            if len(url) < 10: 
-                continue
-            
-            st.divider()
-            st.subheader(f"Vidéo {idx}/{len(urls)}")
-            
-            # Extraction ID
-            video_id = extract_video_id(url)
-            if not video_id:
-                st.error(f"❌ Lien invalide : `{url}`")
-                continue
-            
-            st.info(f"🔎 **ID Vidéo :** `{video_id}`")
-            
-            # Barre de progression
-            progress = st.progress(0)
-            status = st.empty()
-            
-            text = None
-            language = None
-            method = None
-            
-            # MÉTHODE 1 : youtube-transcript-api
-            status.text("🔍 Méthode 1 : youtube-transcript-api...")
-            progress.progress(25)
-            text, language, method = get_subtitles_with_library(video_id)
-            
-            # MÉTHODE 2 : API directe
-            if text is None:
-                status.text("🔍 Méthode 2 : API YouTube directe...")
-                progress.progress(50)
-                text, language, method = get_subtitles_direct_api(video_id)
-            
-            progress.progress(100)
-            status.empty()
-            
-            if text and len(text.strip()) > 0:
-                # Succès !
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    st.metric("Langue", language or "Inconnue")
-                with col2:
-                    st.metric("Caractères", f"{len(text):,}")
-                with col3:
-                    st.metric("Méthode", method)
+        # APPROCHE 3: list_transcripts
+        if not result_text and 'list_transcripts' in dir(YouTubeTranscriptApi):
+            try:
+                st.write("🔄 Essai: list_transcripts()...")
+                transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
                 
-                st.success("✅ **Extraction réussie !**")
-                
-                # Aperçu
-                with st.expander("👁️ Aperçu du texte", expanded=True):
-                    preview = text[:1000] + "..." if len(text) > 1000 else text
-                    st.text_area("", preview, height=200, label_visibility="collapsed")
-                
-                # Téléchargement
-                st.download_button(
-                    label="📥 Télécharger le texte complet",
-                    data=text,
-                    file_name=f"transcript_{video_id}.txt",
-                    mime="text/plain",
-                    use_container_width=True
-                )
-            else:
-                st.error("❌ **Échec de toutes les méthodes**")
-                st.warning("""
-                Aucune méthode n'a réussi à extraire les sous-titres. Vérifiez :
-                - La vidéo est bien publique
-                - Les sous-titres sont activés (bouton CC sur YouTube)
-                - Vous avez la bonne version de youtube-transcript-api
-                """)
-                
-                with st.expander("🔧 Solutions possibles"):
-                    st.code("""
-# Réinstaller la bibliothèque
-pip uninstall youtube-transcript-api
-pip install youtube-transcript-api
-
-# Ou essayer une version spécifique
-pip install youtube-transcript-api==0.6.2
-                    """)
+                # Prendre le premier transcript disponible
+                for transcript in transcript_list:
+                    try:
+                        data = transcript.fetch()
+                        result_text = " ".join([x['text'] for x in data])
+                        result_lang = transcript.language
+                        result_method = "list_transcripts()"
+                        st.success(f"✅ Réussi avec list_transcripts (langue: {transcript.language})")
+                        break
+                    except:
+                        continue
+            except Exception as e:
+                st.warning(f"list_transcripts échoué: {str(e)[:100]}")
+        
+        # RÉSULTAT
+        if result_text and len(result_text) > 20:
+            st.success("🎉 **EXTRACTION RÉUSSIE !**")
             
-            progress.empty()
+            col1, col2 = st.columns(2)
+            with col1:
+                st.metric("Langue", result_lang)
+            with col2:
+                st.metric("Caractères", len(result_text))
+            
+            st.info(f"Méthode utilisée: `{result_method}`")
+            
+            # Aperçu
+            st.text_area("Aperçu:", result_text[:500], height=150)
+            
+            # Téléchargement
+            st.download_button(
+                "📥 Télécharger",
+                data=result_text,
+                file_name=f"{video_id}.txt",
+                mime="text/plain"
+            )
+        else:
+            st.error("❌ **ÉCHEC TOTAL**")
+            st.error("Aucune méthode n'a fonctionné pour cette vidéo")
+            
+            st.markdown("""
+            ### 🔧 Solutions possibles:
+            
+            **1. Vérifier que la vidéo a des sous-titres:**
+            - Allez sur YouTube et regardez si le bouton CC est disponible
+            
+            **2. Réinstaller la bibliothèque:**
+            ```bash
+            pip uninstall youtube-transcript-api
+            pip install youtube-transcript-api==0.6.2
+            ```
+            
+            **3. Tester manuellement dans Python:**
+            ```python
+            from youtube_transcript_api import YouTubeTranscriptApi
+            print(YouTubeTranscriptApi.get_transcript('VIDEO_ID'))
+            ```
+            """)
 
 st.markdown("---")
-st.caption("💡 Cet outil essaie plusieurs méthodes automatiquement.")
+st.caption("Version de diagnostic - affiche toutes les tentatives")
