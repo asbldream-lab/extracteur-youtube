@@ -3,7 +3,7 @@ from youtube_transcript_api import YouTubeTranscriptApi
 import re
 
 st.set_page_config(page_title="Extracteur Pro", page_icon="🚀")
-st.title("🚀 Extracteur YouTube (Version Tout-Terrain)")
+st.title("🚀 !!!!! Extracteur YouTube (Version Tout-Terrain)")
 st.write("Cet outil force la récupération des sous-titres, même automatiques.")
 
 urls_input = st.text_area("Collez vos liens ici :", height=150)
