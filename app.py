@@ -1,89 +1,46 @@
 import streamlit as st
 import re
-import requests
 from youtube_transcript_api import YouTubeTranscriptApi, TranscriptsDisabled, NoTranscriptFound
 
 st.set_page_config(page_title="Extracteur Pro", page_icon="🚀")
-st.title("🚀 Extracteur YouTube (Version Tout-Terrain)")
+st.title("🚀 Extracteur YouTube (Version Finale)")
 
-# --- FONCTIONS ---
-
-def extract_video_id(url):
-    """Extrait l'ID propre de la vidéo"""
-    patterns = [
-        r'(?:v=|\/)([0-9A-Za-z_-]{11}).*',
-        r'(?:embed\/)([0-9A-Za-z_-]{11})',
-        r'(?:watch\?v=)([0-9A-Za-z_-]{11})',
-        r'youtu\.be\/([0-9A-Za-z_-]{11})'
-    ]
-    for pattern in patterns:
-        match = re.search(pattern, url)
-        if match:
-            return match.group(1)
-    return None
-
-def get_transcript_safe(video_id):
-    """Méthode robuste utilisant la librairie officielle"""
+# Fonction de récupération sécurisée
+def get_transcript(video_id):
     try:
-        # 1. On récupère la liste de tous les transcripts dispos
+        # On demande la liste des sous-titres
         transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
         
-        # 2. On essaie de trouver français ou anglais (manuel ou auto)
+        # On essaie de trouver du français ou de l'anglais (manuel ou auto)
         try:
             transcript = transcript_list.find_transcript(['fr', 'fr-FR', 'en', 'en-US'])
         except:
-            # Si pas de FR/EN, on prend le premier qui vient (ex: Espagnol, Allemand...)
+            # Sinon on prend le premier disponible
             transcript = next(iter(transcript_list))
             
-        # 3. On télécharge
-        final_data = transcript.fetch()
-        full_text = " ".join([i['text'] for i in final_data])
-        
-        return full_text, transcript.language, "Via Librairie Officielle"
-
-    except TranscriptsDisabled:
-        return None, None, "Erreur: Sous-titres désactivés par le créateur"
-    except NoTranscriptFound:
-        return None, None, "Erreur: Aucun sous-titre trouvé"
+        return transcript.fetch(), transcript.language
     except Exception as e:
-        return None, None, f"Erreur technique: {str(e)}"
+        return None, str(e)
 
-# --- INTERFACE ---
+# Interface
+url = st.text_input("Collez votre lien YouTube ici :")
 
-urls_input = st.text_area("Collez vos liens ici (un par ligne) :", height=150)
-
-if st.button("Lancer l'extraction"):
-    if not urls_input:
-        st.warning("Veuillez coller un lien.")
-    else:
-        urls = urls_input.split('\n')
-        
-        for url in urls:
-            url = url.strip()
-            if len(url) < 10: continue
-
-            st.divider()
+if st.button("Extraire le texte"):
+    if url:
+        # Extraction de l'ID vidéo
+        video_id_match = re.search(r"(?:v=|\/)([0-9A-Za-z_-]{11}).*", url)
+        if video_id_match:
+            video_id = video_id_match.group(1)
+            st.info(f"Analyse de la vidéo {video_id}...")
             
-            # 1. Extraction ID
-            video_id = extract_video_id(url)
-            if not video_id:
-                st.error(f"Lien invalide : {url}")
-                continue
+            data, error_or_lang = get_transcript(video_id)
             
-            st.info(f"Analyse de {video_id}...")
-            
-            # 2. Récupération du texte
-            text, lang, status = get_transcript_safe(video_id)
-            
-            if text:
-                st.success(f"✅ Succès ! (Langue: {lang})")
-                st.download_button(
-                    label=f"📥 Télécharger {video_id}.txt",
-                    data=text,
-                    file_name=f"{video_id}.txt",
-                    mime="text/plain"
-                )
-                with st.expander("Voir un extrait"):
-                    st.write(text[:500] + "...")
+            if data:
+                text = " ".join([i['text'] for i in data])
+                st.success(f"✅ Trouvé ! (Langue : {error_or_lang})")
+                st.download_button("📥 Télécharger le fichier", data=text, file_name=f"{video_id}.txt")
+                st.text_area("Aperçu", text[:500], height=150)
             else:
-                st.error(f"❌ Échec pour {video_id} : {status}")
+                st.error(f"Erreur : {error_or_lang}")
+        else:
+            st.warning("Lien invalide.")
